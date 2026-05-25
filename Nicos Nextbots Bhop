@@ -1,0 +1,89 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- [[ BIẾN CẤU HÌNH ]]
+local autoJumpEnabled = false
+local strafeSpeed = 55 -- Tốc độ di chuyển khi Bhop (Có thể tùy chỉnh)
+
+-- Tạo ScreenGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoBhopDelta"
+ScreenGui.Parent = PlayerGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.ResetOnSpawn = false -- CHỐT HẠ: Dòng này giúp GUI KHÔNG bị mất khi nhân vật chết
+
+-- Khung chính GUI
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MainFrame.Position = UDim2.new(0.5, -90, 0.4, -55)
+MainFrame.Size = UDim2.new(0, 180, 0, 110)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 10)
+UICorner.Parent = MainFrame
+
+-- Tiêu đề (Đã đổi tên thành AUTO BHOP)
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0, 0, 0, 8)
+Title.Size = UDim2.new(1, 0, 0, 20)
+Title.Font = Enum.Font.GothamBold
+Title.Text = "AUTO BHOP"
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.TextSize = 14
+
+-- Nút Bật/Tắt
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Parent = MainFrame
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+ToggleBtn.Position = UDim2.new(0.1, 0, 0.35, 0)
+ToggleBtn.Size = UDim2.new(0.8, 0, 0.45, 0)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Text = "Bhop: OFF"
+ToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+ToggleBtn.TextSize = 14
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 8)
+BtnCorner.Parent = ToggleBtn
+
+-- Sự kiện Click nút
+ToggleBtn.MouseButton1Click:Connect(function()
+    autoJumpEnabled = not autoJumpEnabled
+    ToggleBtn.Text = autoJumpEnabled and "Bhop: ON" or "Bhop: OFF"
+    ToggleBtn.BackgroundColor3 = autoJumpEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(200, 50, 50)
+end)
+
+-- [[ LOGIC CHÍNH: BHOP + CAMERA AUTO-STRAFE ]]
+RunService.Heartbeat:Connect(function()
+    if not autoJumpEnabled then return end
+    
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp then return end
+
+    -- 1. Xử lý nhảy liên tục khi chạm đất
+    if hum.FloorMaterial ~= Enum.Material.Air then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    else
+        -- 2. Xử lý bẻ hướng trên không (Strafe nâng cao)
+        local moveDirection = hum.MoveDirection
+        if moveDirection.Magnitude > 0 then
+            local currentVelocity = hrp.AssemblyLinearVelocity
+            local targetVelocity = moveDirection * strafeSpeed
+            
+            -- Giữ nguyên lực nhảy lên (Y), chỉ bẻ hướng di chuyển (X và Z)
+            hrp.AssemblyLinearVelocity = Vector3.new(targetVelocity.X, currentVelocity.Y, targetVelocity.Z)
+        end
+    end
+end)
