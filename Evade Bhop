@@ -1,0 +1,459 @@
+local lp = game:GetService("Players").LocalPlayer
+local m = require(game.ReplicatedStorage.Modules.Character.CharacterTable.CharacterController.Local.Movement.returnValues)
+
+local originalGetStats = m.getStats
+local originalReturnTable = m.returnTable
+
+movementInstances = {}
+
+infiniteSlide = false
+slideFriction = -8
+autoJumpEnabled = false
+
+accelerationMethod = "Acceleration"
+accelerationValue = -0.2
+autoJumpType = "Simulation"
+
+wallRunJumpEnabled = true
+
+player = game:GetService("Players").LocalPlayer
+RunService = game:GetService("RunService")
+UserInputService = game:GetService("UserInputService")
+Players = game:GetService("Players")
+
+bhopConnection = nil
+bhopLoaded = false
+characterConnection = nil
+
+Character = nil
+Humanoid = nil
+HumanoidRootPart = nil
+
+LastJump = 0
+currentSpeed = 0
+
+GROUND_CHECK_DISTANCE = 3.5
+MAX_SLOPE_ANGLE = 45
+
+IsOnGround = function()
+    if not Character or not HumanoidRootPart or not Humanoid then
+        return false
+    end
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {Character}
+    raycastParams.IgnoreWater = true
+
+    local rayOrigin = HumanoidRootPart.Position
+    local rayDirection = Vector3.new(0, -GROUND_CHECK_DISTANCE, 0)
+
+    local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+
+    if not raycastResult then
+        return false
+    end
+
+    local surfaceNormal = raycastResult.Normal
+    local angle = math.deg(math.acos(surfaceNormal:Dot(Vector3.new(0,1,0))))
+
+    return angle <= MAX_SLOPE_ANGLE
+end
+
+updateBhop = function()
+    if not bhopLoaded then return end
+
+    character = player.Character
+    humanoid = character and character:FindFirstChild("Humanoid")
+
+    if not character or not humanoid then return end
+
+    if HumanoidRootPart then
+        currentSpeed = (HumanoidRootPart.Velocity * Vector3.new(1,0,1)).Magnitude
+    end
+
+    if autoJumpEnabled then
+        if IsOnGround() then
+            if autoJumpType == "Realistic" then
+                game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.JumpReact:Fire()
+                task.wait(0.1)
+                game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.EndJump:Fire()
+            else
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end
+    end
+
+    if wallRunJumpEnabled then
+        local state = character:GetAttribute("State")
+        if state == "Wallrunning" then
+            game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.JumpReact:Fire()
+            game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.EndJump:Fire()
+        end
+    end
+end
+
+loadBhop = function()
+    if bhopLoaded then return end
+    bhopLoaded = true
+
+    if bhopConnection then
+        bhopConnection:Disconnect()
+    end
+    bhopConnection = RunService.Heartbeat:Connect(updateBhop)
+end
+
+unloadBhop = function()
+    if not bhopLoaded then return end
+    bhopLoaded = false
+
+    if bhopConnection then
+        bhopConnection:Disconnect()
+        bhopConnection = nil
+    end
+end
+
+checkBhopState = function()
+    if autoJumpEnabled then
+        loadBhop()
+    else
+        unloadBhop()
+    end
+end
+
+reapplyBhopOnRespawn = function()
+    if autoJumpEnabled then
+        task.wait(0.5)
+        checkBhopState()
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Character or not Character:IsDescendantOf(workspace) then
+        Character = player.Character or player.CharacterAdded:Wait()
+        if Character then
+            Humanoid = Character:FindFirstChildOfClass("Humanoid")
+            HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+        else
+            Humanoid = nil
+            HumanoidRootPart = nil
+        end
+    end
+end)
+
+if characterConnection then
+    characterConnection:Disconnect()
+end
+
+characterConnection = player.CharacterAdded:Connect(function(character)
+    Character = character
+    Humanoid = character:WaitForChild("Humanoid")
+    HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    reapplyBhopOnRespawn()
+end)
+
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+    if leavingPlayer == player then
+        unloadBhop()
+        if characterConnection then
+            characterConnection:Disconnect()
+        end
+    end
+end)
+
+m.getStats = function(s, p)
+    local v = originalGetStats(s, p)
+    v.BhopEnabled = autoJumpEnabled
+
+    local method = accelerationMethod or "Acceleration"
+    local accel = accelerationValue or -0.2
+
+    if autoJumpEnabled and (method == "Ground Acceleration" or method == "Acceleration") then
+        if method == "No Acceleration" then
+            v.Friction = 5
+        elseif method == "Ground Acceleration" then
+            v.Friction = s:checkGrounded() and accel or 5
+        elseif method == "Acceleration" then
+            if autoAccelerationEnabled then
+                if currentSpeed > maxAutoAccelSpeed then
+                    v.Friction = maxAcceleration
+                elseif currentSpeed < maxAutoAccelSpeed then
+                    v.Friction = minAcceleration
+                else
+                    v.Friction = accel
+                end
+            else
+                v.Friction = accel
+            end
+        end
+    else
+        v.Friction = 5
+    end
+
+    return v
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local UICorner = Instance.new("UICorner")
+local TitleLabel = Instance.new("TextLabel")
+local ToggleButton = Instance.new("TextButton")
+local ButtonCorner = Instance.new("UICorner")
+
+ScreenGui.Name = "BhopMiniGui"
+ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.ResetOnSpawn = false
+
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 27)
+MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+MainFrame.Size = UDim2.new(0, 180, 0, 95)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Parent = MainFrame
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Position = UDim2.new(0, 0, 0, 5)
+TitleLabel.Size = UDim2.new(1, 0, 0, 30)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.Text = "EVADE BHOP"
+TitleLabel.TextColor3 = Color3.fromRGB(244, 244, 245)
+TitleLabel.TextSize = 14
+
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Parent = MainFrame
+ToggleButton.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
+ToggleButton.Position = UDim2.new(0, 15, 0, 40)
+ToggleButton.Size = UDim2.new(1, -30, 0, 40)
+ToggleButton.Font = Enum.Font.GothamSemibold
+ToggleButton.Text = "BHOP: OFF"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.TextSize = 13
+
+ButtonCorner.CornerRadius = UDim.new(0, 6)
+ButtonCorner.Parent = ToggleButton
+
+local function updateUiState()
+    if autoJumpEnabled then
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
+        ToggleButton.Text = "BHOP: ON"
+    else
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
+        ToggleButton.Text = "BHOP: OFF"
+    end
+end
+
+ToggleButton.MouseButton1Click:Connect(function()
+    autoJumpEnabled = not autoJumpEnabled
+    updateUiState()
+    checkBhopState()
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.B then
+        autoJumpEnabled = not autoJumpEnabled
+        updateUiState()
+        checkBhopState()
+    end
+end)
+
+checkBhopState()
+
+    if autoJumpEnabled then
+        if IsOnGround() then
+            if autoJumpType == "Realistic" then
+                game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.JumpReact:Fire()
+                task.wait(0.1)
+                game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.EndJump:Fire()
+            else
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end
+    end
+
+    if wallRunJumpEnabled then
+        local state = character:GetAttribute("State")
+        if state == "Wallrunning" then
+            game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.JumpReact:Fire()
+            game:GetService("Players").LocalPlayer.PlayerScripts.Events.temporary_events.EndJump:Fire()
+        end
+    end
+end
+
+loadBhop = function()
+    if bhopLoaded then return end
+    bhopLoaded = true
+
+    if bhopConnection then
+        bhopConnection:Disconnect()
+    end
+    bhopConnection = RunService.Heartbeat:Connect(updateBhop)
+end
+
+unloadBhop = function()
+    if not bhopLoaded then return end
+    bhopLoaded = false
+
+    if bhopConnection then
+        bhopConnection:Disconnect()
+        bhopConnection = nil
+    end
+end
+
+checkBhopState = function()
+    if autoJumpEnabled then
+        loadBhop()
+    else
+        unloadBhop()
+    end
+end
+
+reapplyBhopOnRespawn = function()
+    if autoJumpEnabled then
+        task.wait(0.5)
+        checkBhopState()
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Character or not Character:IsDescendantOf(workspace) then
+        Character = player.Character or player.CharacterAdded:Wait()
+        if Character then
+            Humanoid = Character:FindFirstChildOfClass("Humanoid")
+            HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+        else
+            Humanoid = nil
+            HumanoidRootPart = nil
+        end
+    end
+end)
+
+if characterConnection then
+    characterConnection:Disconnect()
+end
+
+characterConnection = player.CharacterAdded:Connect(function(character)
+    Character = character
+    Humanoid = character:WaitForChild("Humanoid")
+    HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    reapplyBhopOnRespawn()
+end)
+
+Players.PlayerRemoving:Connect(function(leavingPlayer)
+    if leavingPlayer == player then
+        unloadBhop()
+        if characterConnection then
+            characterConnection:Disconnect()
+        end
+    end
+end)
+
+m.getStats = function(s, p)
+    local v = originalGetStats(s, p)
+    v.BhopEnabled = autoJumpEnabled
+
+    local method = accelerationMethod or "Acceleration"
+    local accel = accelerationValue or -0.2
+
+    if autoJumpEnabled and (method == "Ground Acceleration" or method == "Acceleration") then
+        if method == "No Acceleration" then
+            v.Friction = 5
+        elseif method == "Ground Acceleration" then
+            v.Friction = s:checkGrounded() and accel or 5
+        elseif method == "Acceleration" then
+            if autoAccelerationEnabled then
+                if currentSpeed > maxAutoAccelSpeed then
+                    v.Friction = maxAcceleration
+                elseif currentSpeed < maxAutoAccelSpeed then
+                    v.Friction = minAcceleration
+                else
+                    v.Friction = accel
+                end
+            else
+                v.Friction = accel
+            end
+        end
+    else
+        v.Friction = 5
+    end
+
+    return v
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local UICorner = Instance.new("UICorner")
+local TitleLabel = Instance.new("TextLabel")
+local ToggleButton = Instance.new("TextButton")
+local ButtonCorner = Instance.new("UICorner")
+
+ScreenGui.Name = "BhopMiniGui"
+ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.ResetOnSpawn = false
+
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 27)
+MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+MainFrame.Size = UDim2.new(0, 180, 0, 95)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Parent = MainFrame
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Position = UDim2.new(0, 0, 0, 5)
+TitleLabel.Size = UDim2.new(1, 0, 0, 30)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.Text = "EVADE BHOP"
+TitleLabel.TextColor3 = Color3.fromRGB(244, 244, 245)
+TitleLabel.TextSize = 14
+
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Parent = MainFrame
+ToggleButton.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
+ToggleButton.Position = UDim2.new(0, 15, 0, 40)
+ToggleButton.Size = UDim2.new(1, -30, 0, 40)
+ToggleButton.Font = Enum.Font.GothamSemibold
+ToggleButton.Text = "BHOP: ON"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.TextSize = 13
+
+ButtonCorner.CornerRadius = UDim.new(0, 6)
+ButtonCorner.Parent = ToggleButton
+
+local function updateUiState()
+    if autoJumpEnabled then
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
+        ToggleButton.Text = "BHOP: ON"
+    else
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
+        ToggleButton.Text = "BHOP: OFF"
+    end
+end
+
+ToggleButton.MouseButton1Click:Connect(function()
+    autoJumpEnabled = not autoJumpEnabled
+    updateUiState()
+    checkBhopState()
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.B then
+        autoJumpEnabled = not autoJumpEnabled
+        updateUiState()
+        checkBhopState()
+    end
+end)
+
+checkBhopState()
